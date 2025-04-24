@@ -1,14 +1,16 @@
-import { Request, Response } from 'express';
-import { CommentModel } from '../models/Comment.model';
+import {Request, Response} from 'express';
+import {CommentModel} from '../models/Comment.model';
 import {IUser, UserModel} from '../models/User.model';
+import mongoose from "mongoose";
 
 
 export const createComment = async (req: Request, res: Response) => {
 
     try {
-        const { content, parentId, userId } = req.body;
+        const {user: _user} = req.headers;
+        const {content, parentId} = req.body;
 
-        const user = await UserModel.findOne({_id: userId});
+        const user = await UserModel.findOne({_id: _user});
         if (!user) {
             res.status(404).json({message: 'User not found'});
             return;
@@ -24,59 +26,99 @@ export const createComment = async (req: Request, res: Response) => {
 
         res.status(201).json(comment);
     } catch (error) {
-        res.status(500).json({ message: 'Server error', error });
+        res.status(500).json({message: 'Server error', error});
     }
 };
 
 
-
 export const getComments = async (req: Request, res: Response) => {
     try {
+        const {user: _user} = req.headers;
+
         const page = parseInt(req.query.page as string) || 1;
         const limit = parseInt(req.query.limit as string) || 10;
         const skip = (page - 1) * limit;
 
-        // get comments without parentId
-        const comments = await CommentModel.find({ parentId: null })
-            .populate('userId', 'username')
-            .sort({ createdAt: -1 })
-            .skip(skip)
-            .limit(limit)
-            .lean();
 
-        // find replies for comments
-        const commentIds = comments.map((c) => c._id);
-        const replies = await CommentModel.find({ parentId: { $in: commentIds } })
-            .populate('userId', 'username')
-            .sort({ createdAt: 1 })
-            .lean();
-
-        // connect
-        const commentsWithReplies = comments.map((comment) => ({
-            ...comment,
-            replies: replies.filter((r) => r.parentId?.toString() === comment._id.toString())
-        }));
+        const commentsWithReplies = await CommentModel.aggregate([
+            // Stage 1: Get comments without parentId
+            {
+                $match: {parent: null}
+            },
+            // Stage 2: Add "isLiked" field to check if current user has liked the comment
+            {
+                $addFields: {
+                    isLiked: {$in: [new mongoose.Types.ObjectId(_user as string), "$likes._id"]},
+                    likeCount: { $size: "$likes" }
+                }
+            },
+            // Stage 3: Sort comments by createdAt in descending order
+            {
+                $sort: {createdAt: -1}
+            },
+            // Stage 4: Skip and limit for pagination
+            {
+                $skip: skip
+            },
+            {
+                $limit: limit
+            },
+            // Stage 5: Lookup replies for each comment (using parent field)
+            {
+                $lookup: {
+                    from: "comments",
+                    let: {commentId: "$_id"},
+                    pipeline: [
+                        {$match: {$expr: {$eq: ["$parent", "$$commentId"]}}},
+                        {
+                            $addFields: {
+                                isLiked: {$in: [new mongoose.Types.ObjectId(_user as string), "$likes._id"]},
+                                likeCount: { $size: "$likes" }
+                            }
+                        },
+                        {$sort: {createdAt: 1}},
+                        {$lookup: {from: "users", localField: "user", foreignField: "_id", as: "user"}},
+                        {$unwind: "$user"},
+                        {$project: {likes: 0, parent: 0}},
+                    ],
+                    as: "replies"
+                }
+            },
+            // Stage 6: Populate user data for the comment and its replies
+            {
+                $lookup: {
+                    from: "users",
+                    localField: "user",
+                    foreignField: "_id",
+                    as: "user"
+                }
+            },
+            {
+                $unwind: "$user"
+            },
+            {$project: {likes: 0, parent: 0}},
+        ]);
 
         res.json(commentsWithReplies);
     } catch (error) {
-        res.status(500).json({ message: 'Server error', error });
+        res.status(500).json({message: 'Server error', error});
     }
 };
 
 
 export const toggleLike = async (req: Request, res: Response): Promise<void> => {
     try {
-        const { id } = req.params;
+        const {id} = req.params;
         const user = await UserModel.findOne() as IUser;
         if (!user) {
-            res.status(404).json({ message: 'User not found' });
+            res.status(404).json({message: 'User not found'});
             return;
         }
 
 
         const comment = await CommentModel.findById(id);
         if (!comment) {
-            res.status(404).json({ message: 'Comment not found' });
+            res.status(404).json({message: 'Comment not found'});
             return;
         }
 
@@ -97,6 +139,6 @@ export const toggleLike = async (req: Request, res: Response): Promise<void> => 
             totalLikes: comment.likes.length
         });
     } catch (error) {
-        res.status(500).json({ message: 'Server error', error });
+        res.status(500).json({message: 'Server error', error});
     }
 };
