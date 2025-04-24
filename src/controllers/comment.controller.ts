@@ -18,6 +18,12 @@ export const createComment = async (req: Request, res: Response) => {
         }
 
         const parentComment = await CommentModel.findOne({_id: parent});
+
+        if (parentComment?.parent) {
+            res.status(40).json({message: 'This comment can not have replies'});
+            return;
+        }
+
         const comment = new CommentModel({
             content,
             user: user._id,
@@ -56,7 +62,7 @@ export const getComments = async (req: Request, res: Response) => {
             {
                 $addFields: {
                     isLiked: {$in: [new mongoose.Types.ObjectId(_user as string), "$likes"]},
-                    likeCount: { $size: "$likes" }
+                    likeCount: {$size: "$likes"}
                 }
             },
             // Stage 3: Sort comments by createdAt in descending order
@@ -80,7 +86,7 @@ export const getComments = async (req: Request, res: Response) => {
                         {
                             $addFields: {
                                 isLiked: {$in: [new mongoose.Types.ObjectId(_user as string), "$likes"]},
-                                likeCount: { $size: "$likes" }
+                                likeCount: {$size: "$likes"}
                             }
                         },
                         {$sort: {createdAt: 1}},
