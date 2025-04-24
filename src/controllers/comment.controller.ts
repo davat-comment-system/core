@@ -7,20 +7,21 @@ import mongoose from "mongoose";
 export const createComment = async (req: Request, res: Response) => {
 
     try {
-        const {user: _user} = req.headers;
-        const {content, parentId} = req.body;
+        const {'x-user': _user} = req.headers;
 
-        const user = await UserModel.findOne({_id: _user});
+        const {content, parent} = req.body;
+
+        const user = await UserModel.findOne({_id: new mongoose.Types.ObjectId(_user as string)});
         if (!user) {
             res.status(404).json({message: 'User not found'});
             return;
         }
 
-        const parentComment = await CommentModel.findOne({_id: parentId});
+        const parentComment = await CommentModel.findOne({_id: parent});
         const comment = new CommentModel({
             content,
-            userId: user._id,
-            parentId: parentComment?._id || null
+            user: user._id,
+            parent: parentComment?._id || null
         });
         await comment.save();
 
@@ -33,7 +34,13 @@ export const createComment = async (req: Request, res: Response) => {
 
 export const getComments = async (req: Request, res: Response) => {
     try {
-        const {user: _user} = req.headers;
+        const {'x-user': _user} = req.headers;
+
+        const user = await UserModel.findOne({_id: new mongoose.Types.ObjectId(_user as string)});
+        if (!user) {
+            res.status(404).json({message: 'User not found'});
+            return;
+        }
 
         const page = parseInt(req.query.page as string) || 1;
         const limit = parseInt(req.query.limit as string) || 10;
@@ -48,7 +55,7 @@ export const getComments = async (req: Request, res: Response) => {
             // Stage 2: Add "isLiked" field to check if current user has liked the comment
             {
                 $addFields: {
-                    isLiked: {$in: [new mongoose.Types.ObjectId(_user as string), "$likes._id"]},
+                    isLiked: {$in: [new mongoose.Types.ObjectId(_user as string), "$likes"]},
                     likeCount: { $size: "$likes" }
                 }
             },
@@ -72,7 +79,7 @@ export const getComments = async (req: Request, res: Response) => {
                         {$match: {$expr: {$eq: ["$parent", "$$commentId"]}}},
                         {
                             $addFields: {
-                                isLiked: {$in: [new mongoose.Types.ObjectId(_user as string), "$likes._id"]},
+                                isLiked: {$in: [new mongoose.Types.ObjectId(_user as string), "$likes"]},
                                 likeCount: { $size: "$likes" }
                             }
                         },
@@ -108,8 +115,11 @@ export const getComments = async (req: Request, res: Response) => {
 
 export const toggleLike = async (req: Request, res: Response): Promise<void> => {
     try {
+        const {'x-user': _user} = req.headers;
+
         const {id} = req.params;
-        const user = await UserModel.findOne() as IUser;
+
+        const user = await UserModel.findOne({_id: new mongoose.Types.ObjectId(_user as string)});
         if (!user) {
             res.status(404).json({message: 'User not found'});
             return;
@@ -135,8 +145,8 @@ export const toggleLike = async (req: Request, res: Response): Promise<void> => 
         await comment.save();
 
         res.json({
-            liked: !isLiked,
-            totalLikes: comment.likes.length
+            isLiked: !isLiked,
+            likeCount: comment.likes.length,
         });
     } catch (error) {
         res.status(500).json({message: 'Server error', error});
