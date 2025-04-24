@@ -6,20 +6,20 @@ import {IUser, UserModel} from '../models/User.model';
 export const createComment = async (req: Request, res: Response) => {
 
     try {
-        const { content, parentId } = req.body;
+        const { content, parentId, userId } = req.body;
 
-        const user = await UserModel.findOne();
+        const user = await UserModel.findOne({_id: userId});
         if (!user) {
             res.status(404).json({message: 'User not found'});
             return;
         }
 
+        const parentComment = await CommentModel.findOne({_id: parentId});
         const comment = new CommentModel({
             content,
             userId: user._id,
-            parentId: parentId || null
+            parentId: parentComment?._id || null
         });
-
         await comment.save();
 
         res.status(201).json(comment);
@@ -32,10 +32,16 @@ export const createComment = async (req: Request, res: Response) => {
 
 export const getComments = async (req: Request, res: Response) => {
     try {
+        const page = parseInt(req.query.page as string) || 1;
+        const limit = parseInt(req.query.limit as string) || 10;
+        const skip = (page - 1) * limit;
+
         // get comments without parentId
         const comments = await CommentModel.find({ parentId: null })
             .populate('userId', 'username')
             .sort({ createdAt: -1 })
+            .skip(skip)
+            .limit(limit)
             .lean();
 
         // find replies for comments
